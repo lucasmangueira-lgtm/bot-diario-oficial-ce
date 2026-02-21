@@ -50,18 +50,28 @@ def mark_found_today(state):
 
 
 def get_last_published_date():
-    """Verifica na página de últimas edições qual a data do último diário publicado."""
+    """Verifica se o diário de hoje já foi publicado. Retorna True se sim."""
     url = "http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/sead.do?page=ultimasEdicoes&cmd=11&action=Ultimas"
-    resp = requests.get(url, timeout=30)
-    soup = BeautifulSoup(resp.text, "html.parser")
     
-    # Procura pela frase "Último Diário publicado ( DD/MM/YYYY )"
-    texto = soup.get_text()
-    match = re.search(r"Último Diário publicado\s*\(\s*(\d{2}/\d{2}/\d{4})\s*\)", texto)
-    if match:
-        data_str = match.group(1)
-        return datetime.datetime.strptime(data_str, "%d/%m/%Y").date()
-    return None
+    try:
+        resp = requests.get(url, timeout=45)  # timeout maior
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        
+        texto = soup.get_text()
+        match = re.search(r"Último Diário publicado\s*\(\s*(\d{2}/\d{2}/\d{4})\s*\)", texto)
+        if match:
+            data_str = match.group(1)
+            last_date = datetime.datetime.strptime(data_str, "%d/%m/%Y").date()
+            today = datetime.date.today()
+            return last_date == today
+        
+        print("Não encontrou data na página de últimas edições")
+        return False
+        
+    except Exception as e:
+        print(f"Erro ao verificar últimas edições: {e}. Tentando PDF mesmo assim...")
+        return True  # fallback: tenta baixar PDF mesmo se não conseguir acessar a página
 
 
 def build_pdf_url_for_date(date_obj):
@@ -71,7 +81,7 @@ def build_pdf_url_for_date(date_obj):
 
 
 def download_pdf_bytes(url):
-    resp = requests.get(url, timeout=60)
+    resp = requests.get(url, timeout=90)  # timeout bem maior para PDF
     if resp.status_code != 200:
         raise RuntimeError(f"Erro ao baixar PDF: status {resp.status_code}")
     return resp.content
@@ -109,32 +119,36 @@ def send_email(subject: str, body: str):
 
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.send_message(msg)
-
-    print("E-mail enviado para", RECIPIENT_EMAIL)
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.send_message(msg)
+        print("E-mail enviado para", RECIPIENT_EMAIL)
+    except Exception as e:
+        print(f"Erro ao enviar e-mail: {e}")
 
 
 def main():
+    print("=== Bot DOE/CE iniciado ===")
     state = load_state()
     if already_found_today(state):
         print("Já encontrou correspondência hoje. Nada a fazer.")
         return
 
     # Verificar se o diário de hoje já foi publicado
-    last_published = get_last_published_date()
-    today = datetime.date.today()
+    diario_hoje_publicado = get_last_published_date()
     
-    if last_published != today:
-        print(f"Diário de hoje ainda não foi publicado. Último: {last_published}")
+    if not diario_hoje_publicado:
+        print("Diário de hoje ainda não foi publicado. Aguardando...")
         return
 
-    print(f"Diário de hoje publicado: {today}. Baixando PDF...")
+    print("Diário de hoje publicado. Baixando PDF...")
     
+    today = datetime.date.today()
     try:
         url = build_pdf_url_for_date(today)
+        print(f"Baixando: {url}")
         pdf_bytes = download_pdf_bytes(url)
     except Exception as e:
         print("Não foi possível baixar o PDF de hoje:", e)
@@ -164,6 +178,7 @@ def main():
 
         send_email(subject, body)
         mark_found_today(state)
+        print("ACHADO! E-mail enviado e marcado como encontrado hoje.")
     else:
         print("Nenhum dos nomes foi encontrado hoje.")
 
