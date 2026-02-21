@@ -2,23 +2,20 @@ name: Bot Diario Oficial CE
 
 on:
   schedule:
-    - cron: "*/20 * * * *"  # a cada 20 minutos (UTC)
+    - cron: "0 */20 * * *"  # 20h00, 20h20, 20h40, 21h00... UTC
   workflow_dispatch: {}
 
 jobs:
   check-doe:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # para commit do state.json
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
-      - name: Baixar state.json anterior (se existir)
-        uses: actions/download-artifact@v4
         with:
-          name: doe-state
-          path: .
-        continue-on-error: true
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -39,10 +36,12 @@ jobs:
         run: |
           python checker.py
 
-      - name: Enviar state.json atualizado
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: doe-state
-          path: state.json
-          if-no-files-found: ignore
+      - name: Commit state.json atualizado (se mudou)
+        run: |
+          if [ -f state.json ]; then
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            git add state.json
+            git diff --staged --quiet || git commit -m "Update state.json [skip ci]"
+            git push
+          fi
