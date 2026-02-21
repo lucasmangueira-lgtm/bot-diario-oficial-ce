@@ -2,11 +2,12 @@ import os
 import json
 import smtplib
 import datetime
+import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from io import BytesIO
-
 import requests
+from bs4 import BeautifulSoup
 import fitz  # PyMuPDF
 
 STATE_FILE = "state.json"
@@ -25,8 +26,6 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 
 
 def load_state():
-    if not os.path.exists(STATE_FILE):
-        return {}
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -50,11 +49,25 @@ def mark_found_today(state):
     save_state(state)
 
 
-def build_pdf_url_for_today():
-    today = datetime.date.today()
-    date_str = today.strftime("%Y%m%d")
+def get_last_published_date():
+    """Verifica na página de últimas edições qual a data do último diário publicado."""
+    url = "http://pesquisa.doe.seplag.ce.gov.br/doepesquisa/sead.do?page=ultimasEdicoes&cmd=11&action=Ultimas"
+    resp = requests.get(url, timeout=30)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    
+    # Procura pela frase "Último Diário publicado ( DD/MM/YYYY )"
+    texto = soup.get_text()
+    match = re.search(r"Último Diário publicado\s*\(\s*(\d{2}/\d{2}/\d{4})\s*\)", texto)
+    if match:
+        data_str = match.group(1)
+        return datetime.datetime.strptime(data_str, "%d/%m/%Y").date()
+    return None
+
+
+def build_pdf_url_for_date(date_obj):
+    date_str = date_obj.strftime("%Y%m%d")
     url = f"http://imagens.seplag.ce.gov.br/PDF/{date_str}/do{date_str}p01.pdf"
-    return url, date_str
+    return url
 
 
 def download_pdf_bytes(url):
@@ -110,9 +123,18 @@ def main():
         print("Já encontrou correspondência hoje. Nada a fazer.")
         return
 
+    # Verificar se o diário de hoje já foi publicado
+    last_published = get_last_published_date()
+    today = datetime.date.today()
+    
+    if last_published != today:
+        print(f"Diário de hoje ainda não foi publicado. Último: {last_published}")
+        return
+
+    print(f"Diário de hoje publicado: {today}. Baixando PDF...")
+    
     try:
-        url, date_str = build_pdf_url_for_today()
-        print("Baixando PDF:", url)
+        url = build_pdf_url_for_date(today)
         pdf_bytes = download_pdf_bytes(url)
     except Exception as e:
         print("Não foi possível baixar o PDF de hoje:", e)
@@ -127,7 +149,7 @@ def main():
     found_names = search_names_in_text(text, NAMES_TO_SEARCH)
 
     if found_names:
-        today_br = datetime.date.today().strftime("%d/%m/%Y")
+        today_br = today.strftime("%d/%m/%Y")
         subject = f"[BOT DOE/CE] Nome(s) encontrado(s) no Diário Oficial em {today_br}"
         lines = [
             f"Foi encontrada correspondência no Diário Oficial do Estado do Ceará em {today_br}.",
