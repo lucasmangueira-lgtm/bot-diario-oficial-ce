@@ -2,8 +2,18 @@ name: Bot Diario Oficial CE
 
 on:
   schedule:
-    - cron: "0 */20 * * *"  # 20h00, 20h20, 20h40, 21h00... UTC
+    # 18:30 BRT = 21:30 UTC
+    - cron: "30 21 * * *"
+    # 18:50 BRT = 21:50 UTC
+    - cron: "50 21 * * *"
+    # 19:00 BRT = 22:00 UTC
+    - cron: "0 22 * * *"
+    # 19:05 BRT = 22:05 UTC
+    - cron: "5 22 * * *"
+    # 19:10 BRT = 22:10 UTC
+    - cron: "10 22 * * *"
   workflow_dispatch: {}
+
 
 jobs:
   check-doe:
